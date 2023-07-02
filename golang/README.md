@@ -45,6 +45,9 @@ There is a great blogpost by Etienne Dilocker about the limit variable:
 GODEBUG=gctrace=1 go run .
 ```
 
+For the full explanation of the values logged, open the documentation of
+[pkg.go.dev/runtime#MemStats](https://pkg.go.dev/runtime#MemStats).
+
 ## Run the Memory Tool in Docker
 
 The Go binary must be built.

@@ -45,6 +45,7 @@ func main() {
 
 func printMemoryReport(arr []int32) {
 	// https://golangcode.com/print-the-current-memory-usage/
+	// https://pkg.go.dev/runtime#MemStats
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
 
