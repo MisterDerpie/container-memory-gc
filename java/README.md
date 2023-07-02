@@ -53,7 +53,7 @@ It limits the container memory size to 100MB, and with the default configuration
 
 ```bash
 docker container run -it \
-    -m 100m  \
+    -m 100m  --memory-swap 100m \
     -v $(pwd)/build/FillMemory.jar:/tmp/fill-memory/run.jar \
     --rm amazoncorretto:17 \
     java -verbose:gc -jar /tmp/fill-memory/run.jar
