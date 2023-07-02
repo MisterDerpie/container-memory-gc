@@ -2,7 +2,7 @@ package com.misterderpie;
 
 public class FillMemory {
     
-    private final static int maxLimitInMiB = 1000;
+    private final static int maxLimitInMiB = 200;
     private final static int mbToAllocatePerRound = 10;
 
     private static Runtime runtime = Runtime.getRuntime();

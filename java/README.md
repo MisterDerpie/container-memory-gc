@@ -1,6 +1,6 @@
 # Fill Memory
 
-This directory contains a simple Java script which will consume up to 1 GB,
+This directory contains a simple Java script which will consume up to 200 MB,
 in chunks of 10MB/allocation round.
 
 Note that the chunk size is not accurate but only a rough estimate.
@@ -12,6 +12,8 @@ You can adjust the limit as well as the chunk size at the top of `FillMemory.jar
 private final static int maxLimitInMiB = 50;
 private final static int mbToAllocatePerRound = 25;
 ```
+
+It also contains a script to compare the HeapSize defaults of JVMs running in docker, `jvm_heap_diff.sh`.
 
 ## Build
 
