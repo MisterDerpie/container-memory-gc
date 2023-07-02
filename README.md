@@ -101,14 +101,14 @@ Reciting the question from the top
 
 the answers in short are:
 
-- Java: Yes
-- Go: Maybe, there is no data indicating it, but also no data refuting it.
+- Java: Yes.
+- Go: No, but it also does not respect the host's memory.
 
 > Will the GC be force-invoked when reaching the container limit, to prevent Out-Of-Memory (OOM)?
 
 - Java: Yes, that follows as the JVM is aware of the container's memory limit.
-As pointed out below, the default limit of the JVM heap is less than the memory allocated to the container. 
-- Go: No
+As pointed out below, the default limit of the JVM heap is less than the memory allocated to the container.
+- Go: No.
 
 For the long answers, continue reading.
 
@@ -187,3 +187,187 @@ A thorough explanation of the difference between "definitely" and "presumably" f
 
 ### Go
 
+As stated at the start of the section, Go is at least not indicating to be aware of the memory restrictions in its Garbage Collector.
+The setup used will always have located memory of less or approximately equal to 100MB.
+In the next iteration of the script, the previously allocated memory becomes orphaned.
+Thus, it could be picked up by the Garbage Collector and be freed, before the next chunk of less or approximately equal to 100MB is requested.
+
+All experiments were conducted with a memory limit of 150MB.
+
+### Relying on Go's default GC
+
+```bash
+$ docker container run -it \
+    -e GODEBUG=gctrace=1 \
+    -m 150m --memory-swap 150m \
+    -v $(pwd)/container-memory-gc:/tmp/fill-memory/container-memory-gc \
+    --rm alpine \
+    /tmp/fill-memory/container-memory-gc
+```
+
+Depending on how much luck you have with the RNG, the run takes longer or shorter.
+In all runs I had, I eventually received similar to the following result.
+Note that the lines prefixed with `gc` are from Go's garbage collector, which is enabled by setting the environment variable `GODEBUG=gctrace=1`.
+
+```txt
+gc 2 @0.085s 0%: 0.013+0.14+0.014 ms clock, 0.22+0/0.17/0+0.22 ms cpu, 138->138->82 MB, 138 MB goal, 0 MB stacks, 0 MB globals, 16 P
+----- Report -----
+Allocated []int32:  21495808
+Possible Heap Size: 154MB
+Allocated:          82MB
+HeapAlloc:          82MB
+HeapInUse:          82MB
+HeapIdle:           61MB
+------------------
+Round:              4/100
+Allocating:         79MB
+gc 3 @0.209s 0%: 0.013+0.36+0.012 ms clock, 0.21+0/0.20/0+0.19 ms cpu, 161->161->79 MB, 164 MB goal, 0 MB stacks, 0 MB globals, 16 P
+```
+
+In some of the cases, there was no GC log line printed, and it just died out of memory.
+
+```
+Allocating:         14MB
+----- Report -----
+Allocated []int32:  3670016
+Possible Heap Size: 207MB
+Allocated:          105MB
+HeapAlloc:          105MB
+HeapInUse:          105MB
+HeapIdle:           90MB
+------------------
+Round:              9/100
+Allocating:         53MB
+```
+
+Every run failed eventually as soon as `HeapAlloc + Allocating > {Max Container Memory}` occurred.
+Let's have a deeper look into what the [gctrace](https://pkg.go.dev/runtime) tells us:
+
+```
+gctrace: setting gctrace=1 causes the garbage collector to emit a single line to standard
+error at each collection, summarizing the amount of memory collected and the
+length of the pause. The format of this line is subject to change.
+Currently, it is:
+	gc # @#s #%: #+#+# ms clock, #+#/#/#+# ms cpu, #->#-># MB, # MB goal, # MB stacks, #MB globals, # P
+where the fields are as follows:
+...
+	#->#-># MB   heap size at GC start, at GC end, and live heap
+    # MB goal    goal heap size
+```
+
+It is visible that the heap size at GC start surpasses the maximum memory the container is allowed to consume.
+What is not entirely clear to me is _when_ the GC got invoked.
+Citing from the documentation [A Guide to the Go Garbage Collector](https://tip.golang.org/doc/gc-guide#Latency)
+
+> The Go GC, however, is not fully stop-the-world and does most of its work concurrently with the application.
+
+it could be that the concurrent execution leads to the intermediate heap size being larger than the memory limit.
+The next section shows the concurrent behavior, as the log of the GC interferes with the print from the program itself.
+Therefore, I assume that the GC at the time of invocation is "late to the party" and cannot rescue the application from its death.
+
+### Forcing GC before allocating new memory
+
+Life looks better when we force the GC to clean up every time before we allocate memory.
+
+```bash
+$ docker container run -it \
+    -e GODEBUG=gctrace=1 \
+    -m 150m --memory-swap 150m \
+    -v $(pwd)/container-memory-gc:/tmp/fill-memory/container-memory-gc \
+    --rm alpine \
+    /tmp/fill-memory/container-memory-gc -f
+...
+Forcing garbage collection.
+gc 145 @5.879s 0%: 0.012+0.12+0.011 ms clock, 0.19+0/0.16/0+0.18 ms cpu, 3->3->0 MB, 4Round:              75/100
+ MB goal, Allocating:       71MB
+0 MB stacks, 0 MB globals, 16 P (forced)
+gc 146 @5.885s 0%: 0.018+0.27+0.011 ms clock, 0.29+0/0.18/0+0.17 ms cpu, 71->71->71 MB, 71 MB goal, 0 MB stacks, 0 MB globals, 16 P
+----- Report -----
+Allocated []int32:  18612224
+Possible Heap Size: 141MB
+Allocated:          71MB
+HeapAlloc:          71MB
+HeapInUse:          71MB
+HeapIdle:           60MB
+------------------
+Forcing garbage collection.
+gc 147 @5.993s 0%: 0.014+0.097+0.007 ms clock, 0.23+0/0.20/0+0.11 ms cpu, 71->71->0 MB, 142 MB goal, 0 MB stacks, 0 MB globals, 16 P (forced)
+Round:              76/100
+Allocating:         100MB
+gc 148 @6.005s 0%: 0.017+0.45+0.009 ms clock, 0.27+0/0.16/0+0.15 ms cpu, 100->100->100 MB, 100 MB goal, 0 MB stacks, 0 MB globals, 16 P
+----- Report -----
+Allocated []int32:  26214400
+Possible Heap Size: 141MB
+Allocated:          100MB
+HeapAlloc:          100MB
+HeapInUse:          100MB
+HeapIdle:           31MB
+...
+------------------
+Successfully finished.
+```
+
+Provided an excerpt of the very place where we would have exceeded the limit with the previous experiment.
+In the 75th iteration, we allocated 71MB.
+Then, in the 76th iteration, we allocate 100MB.
+If the heap would not have been cleaned, that would result in 171MB of assigned memory.
+Comparing this to the preceding example, where the garbage collection was not enforced, this would have led to an OOM.
+None of the runs contains lines of the form `{start}->{end}->{live}` where start/end exceed the assigned memory.
+
+### Comparison - Automatic GC vs Forced GC
+
+Comparing the results of both, I come to the conclusion that the Go GC is not aware of the container's memory limit, or at least not acting based on it.
+Note that I conclude the same for the host memory, read further below.
+This conclusion is based on the output we saw from the first experiment.
+
+```txt
+161->161->79 MB, 164 MB goal
+#->#-># MB   heap size at GC start, at GC end, and live heap
+# MB goal    goal heap size
+```
+
+If Go's garbage collector would be aware that the container has a memory limit of 150MB, or acted based on that, it would have rather freed up all orphened variables than increasing the Heap Size.
+
+There is one important thing to note though: Go's Garbage Collector is not just ignoring the container limit, it does not consider the host's limit either.
+To underline this, I invoked the Go binary directly on the host machine (setting the allocate per round to 25GB).
+
+```bash
+$ GODEBUG=gctrace=1 go run .
+----- Report -----
+Allocated []int32:  1
+Possible Heap Size: 11MB
+Allocated:          0MB
+HeapAlloc:          0MB
+HeapInUse:          0MB
+HeapIdle:           3MB
+------------------
+Round:              1/100
+Allocating:         25000MB
+gc 1 @0.169s 0%: 0.011+0.33+0.010 ms clock, 0.18+0.24/0.84/0.12+0.16 ms cpu, 25000->25000->25000 MB, 25000 MB goal, 0 MB stacks, 0 MB globals, 16 P
+----- Report -----
+Allocated []int32:  6553600000
+Possible Heap Size: 25434MB
+Allocated:          25000MB
+HeapAlloc:          25000MB
+HeapInUse:          25000MB
+HeapIdle:           2MB
+------------------
+Round:              2/100
+Allocating:         25000MB
+gc 2 @38.487s 0%: 0.018+0.67+0.014 ms clock, 0.28+0/1.1/0+0.22 ms cpu, 50000->50000->25000 MB, 50000 MB goal, 0 MB stacks, 0 MB globals, 16 P
+signal: killed
+```
+
+When running it with `-f` or `-f -d` (`-d` disables the automatic GC), each garbage collection will entirely free the orphaned variables.
+
+```txt
+gc 2 @38.292s 0%: 0.011+0.41+0.009 ms clock, 0.18+0/0.41/0.001+0.14 ms cpu, 25000->25000->0 MB, 8796093021775 MB goal, 0 MB stacks, 0 MB globals, 16 P (forced)
+```
+
+In most real world applications, one single operation is unlikely to increase the memory in such drastic amounts.
+Utilizing 
+
+There are also more parameters to tweak around the Go Garbage Collector:
+
+- [GOGC](https://tip.golang.org/doc/gc-guide#GOGC) - Aggressiveness of the Go GC
+- [GOMEMLIMIT](https://weaviate.io/blog/gomemlimit-a-game-changer-for-high-memory-applications) - Soft Memory Limit
