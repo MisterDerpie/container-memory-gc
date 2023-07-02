@@ -10,22 +10,21 @@ Go program logs data about the heap used by it.
 
 The question we wanted to know an answer to is
 
-> Are Go binaries or JVMs aware of the memory restrictions by their container runtime?
+> Are Go binaries or JVMs aware of the memory restrictions when running inside a container?
 
 and a more fine grained question
 
 > Will the GC be force-invoked when reaching the container limit, to prevent Out-Of-Memory (OOM)?
 
 Running a program inside a container, it is possible to specify limits for their resource consumption.
-In Linux, this can be achieved via so called Control Groups, abbreviated [man7.org/cgroups](https://man7.org/linux/man-pages/man7/cgroups.7.html).
+In Linux, this can be achieved via so called Control Groups, see [man7.org/cgroups](https://man7.org/linux/man-pages/man7/cgroups.7.html).
 
 > Control groups, usually referred to as cgroups, are a Linux
 kernel feature which allow processes to be organized into
 hierarchical groups whose usage of various types of resources can
 then be limited and monitored.
 
-A user may specify a limit of 100MB to a container and would thus expect their programs to only ever
-about those 100MB.
+A user may specify a limit of 100MB to a container and would thus expect their programs to only ever be aware of these 100MB.
 That is not the case, in fact, from within a container, the memory of the host is still visible.
 To prove that, a very easy experiment can be conducted, using [stress-ng](https://manpages.ubuntu.com/manpages/xenial/man1/stress-ng.1.html):
 
@@ -37,7 +36,7 @@ MemFree:        25121288 kB
 MemAvailable:   29299076 kB
 ...
 
-/ # apk update && apg add stress-ng
+/ # apk update && apk add stress-ng
 ...
 / # stress-ng -vm 1 --vm-bytes 50M -t 1s
 stress-ng: debug: [543] RAM total: 31.2G, RAM free: 22.9G, swap free: 2.0G
@@ -64,8 +63,8 @@ In the Java program (inside the subfolder `java/`), increasing chunks of memory 
 With each iteration, the chunk of allocated memory increases, and the previously requested chunk becomes orphaned.
 The program was compiled using Amazon Corretto 17 (`OpenJDK Runtime Environment Corretto-17.0.7.7.1 (build 17.0.7+7-LTS)OpenJDK Runtime Environment Corretto-17.0.7.7.1 (build 17.0.7+7-LTS`).
 
-For the Go program, the core of requesting chunks of memory in a for-loop stays the same.
-What differs though is that the chunk is not increasing in each iteration, but randomly chosen in the interval of `[1, maxSizeInMiB + 1]`.
+For the Go program (inside the subfolder `golang/`), the core of requesting chunks of memory in a for-loop stays the same.
+What differs though is that the chunk is not increasing with each iteration, but randomly chosen in the interval of `[1, maxSizeInMiB + 1]`.
 It moreover supports two CLI parameters, `-f` to force the GC to kick in before allocation, and `-d` to disable automatic GC runs.
 It was built using Go 1.20.5 (`go version go1.20.5 linux/amd64`).
 
@@ -86,7 +85,7 @@ $ docker container run -it \
 ### Go
 
 ```bash
-docker container run -it \
+$ docker container run -it \
     -e GODEBUG=gctrace=1 \
     -m {limit}m --memory-swap {limit}m \
     -v $(pwd)/container-memory-gc:/tmp/fill-memory/container-memory-gc \
@@ -98,7 +97,7 @@ docker container run -it \
 
 Reciting the question from the top
 
-> Are Go binaries or JVMs aware of the memory restrictions by their container runtime?
+> Are Go binaries or JVMs aware of the memory restrictions when running inside a container?
 
 the answers in short are:
 
@@ -107,10 +106,11 @@ the answers in short are:
 
 > Will the GC be force-invoked when reaching the container limit, to prevent Out-Of-Memory (OOM)?
 
-- Java: Yes, that concludes immediately as the JVM is aware of the container's memory limit.
+- Java: Yes, that follows as the JVM is aware of the container's memory limit.
+As pointed out below, the default limit of the JVM heap is less than the memory allocated to the container. 
 - Go: No
 
-Below I provide more details, for each language respectively.
+For the long answers, continue reading.
 
 ### Java
 
@@ -133,7 +133,7 @@ Max Heap Size:      241MB   # 1000 MB   failed
 Max Heap Size:      500MB   # 2000 MB   succeeded
 ```
 
-It was immediately visible that the output of the max heap size ([Runtime.maxMemory](https://docs.oracle.com/javase/8/docs/api/java/lang/Runtime.html#maxMemory--)) seemed to be a fraction of what the container's limit was.
+It was immediately visible that the output of the max heap size ([Runtime.maxMemory](https://docs.oracle.com/javase/8/docs/api/java/lang/Runtime.html#maxMemory--)) seems to be a fraction of what the container's limit is.
 Therefore, the question whether the JVM is aware of the container's memory limit can be answered with yes.
 
 To get an understanding where these values come from, I ran the following commands
@@ -152,13 +152,13 @@ diff 100m 1000m
 
 To verify that it is not just Amazon corretto, I ran the `java/jvm_heap_diff.sh` script with `ibmjava` and `eclipse-temurin` and could confirm that they also specify the `MaxHeapSize` relative to the container's max memory.
 
-### OOM
+#### Running OOM
 
-The less interesting part for the question, but worth noticing is, that the default script allocating up to 200MB only succeeded with 2000 MB input memory specified.
+The less interesting part for the question, but very important to mention is, that the default script allocating up to 200MB only succeeded with 2000MB input memory specified.
 That is due to the JVM presumably taking up the remaining memory on its own. 
 
 ```bash
-docker container run -it \
+$ docker container run -it \
     -m 1000m  --memory-swap 1000m \
     -v $(pwd)/build/FillMemory.jar:/tmp/fill-memory/run.jar \
     --rm amazoncorretto:17 \
@@ -184,3 +184,6 @@ Exception in thread "main" java.lang.OutOfMemoryError: Java heap space
 ```
 
 A thorough explanation of the difference between "definitely" and "presumably" free memory can be found in this [StackOverflow Thread](https://stackoverflow.com/questions/12807797/java-get-available-memory).
+
+### Go
+
