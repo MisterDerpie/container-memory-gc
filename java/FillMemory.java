@@ -1,18 +1,27 @@
 package com.misterderpie;
 
-public class MonitorMemory {
+public class FillMemory {
     
+    private final static int maxLimitInMiB = 1000;
+    private final static int mbToAllocatePerRound = 10;
+
     private static Runtime runtime = Runtime.getRuntime();
 
     public static void main(String[] args) throws Exception {
+        System.out.println("Allocation Limit:   " + maxLimitInMiB + "MB");
+        System.out.println("Allocation/Round:   " + mbToAllocatePerRound + "MB");
         System.out.println("Max Heap Size:      " + memoryInMiB(runtime.maxMemory()));
+        System.out.println();
     
-        for (int i = 0; i < 100; i++) {
+        for (int i = 1; mbToAllocatePerRound * i <= maxLimitInMiB; i++) {
+            int integersToAllocate = calculateMegabyteSize(i * mbToAllocatePerRound);
+            int memoryToAllocateInByte = integersToAllocate * 4;
+            System.out.println("Allocating Memory:  " + memoryInMiB(memoryToAllocateInByte));
+            int[] memoryAllocation = new int[integersToAllocate];
             printMemoryReport();
-            int[] spaceConsoomer = new int[i*1024*1024]; // 10 MB
-            printMemoryReport();
-            Thread.sleep(1000);
         }
+
+        System.out.println("Finished - Allocated max possible amount less than " + maxLimitInMiB + "MB.");
     }
 
     private static void printMemoryReport() {
@@ -26,9 +35,14 @@ public class MonitorMemory {
         System.out.println("Allocated:          " + memoryInMiB(allocatedMemory));
         System.out.println("Presumably free:    " + memoryInMiB(presumableFreeMemory));
         System.out.println("Definitely free:    " + memoryInMiB(definitelyFreeMemory));
+        System.out.println("------------------");
     }
 
     private static String memoryInMiB(long memoryInBytes) {
         return (memoryInBytes / 1024 / 1024) + "MB";
+    }
+
+    private static int calculateMegabyteSize(int amountOfInts) {
+        return amountOfInts * 1024 * 1024 / 4;    // 4 Byte/Int
     }
 }
